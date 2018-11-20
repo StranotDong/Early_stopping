@@ -3,12 +3,21 @@ from scipy.signal import wiener
 import math
 import numpy as np
 
+
+'''
+decide the actual win_size
+'''
+def actual_win_size(win_size):
+    half_win = int(math.floor(win_size/2))
+    total_win = half_win*2+1
+    return total_win, half_win
 '''
 smoothing by linear filtering
 '''
 def smooth_by_linear_filter(data, win_size, win_type='rectangular'):
-    half_win = int(math.floor(win_size/2))
-    total_win = half_win*2+1
+#    half_win = int(math.floor(win_size/2))
+#    total_win = half_win*2+1
+    total_win, half_win = actual_win_size(win_size)
     if win_type == 'gaussian':
         data_smoothed = gaussian_filter(data, total_win)
         return data_smoothed
