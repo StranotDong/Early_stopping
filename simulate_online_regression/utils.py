@@ -3,6 +3,11 @@ from scipy.signal import wiener
 import math
 import numpy as np
 
+'''
+power function y = ax^b, logy = loga + b*logx
+'''
+def power_function(x, a, b):
+    return np.exp(np.log(a)+b*np.log(x))
 
 '''
 decide the actual win_size
