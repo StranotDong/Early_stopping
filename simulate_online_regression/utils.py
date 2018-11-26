@@ -7,6 +7,8 @@ import numpy as np
 power function y = ax^b, logy = loga + b*logx
 '''
 def power_function(x, a, b):
+    if a == 0:
+        return np.zeros(len(x))
     return np.exp(np.log(a)+b*np.log(x))
 
 '''

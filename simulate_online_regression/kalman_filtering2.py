@@ -46,25 +46,27 @@ class oneIterPowerKalmanFilter:
 
         ## variance of process noise
         self.var_ud = process_noise_var
+        
         epochs = (np.arange(len(init_x))+1)*self.numEpsBtwVal
-        a, b = power_regression(epochs, init_x, np.ones(len(init_x)))
-        s_est = power_function(epochs, a, b)
-        # A = np.vstack([epochs, np.ones(len(init_x))]).T
-        # a, b = np.linalg.lstsq(A, init_x, rcond=-1)[0]
-        # s_est = a*epochs + b
+#        a, b = power_regression(epochs, init_x, np.ones(len(init_x)))
+#        s_est = power_function(epochs, a, b)
+        A = np.vstack([epochs, np.ones(len(init_x))]).T
+        a, b = np.linalg.lstsq(A, init_x, rcond=-1)[0]
+        s_est = a*epochs + b
 
         self.epochs = epochs[len(epochs) - self.currentWinSize:]
         self.x = init_x[len(init_x) - self.currentWinSize:]
         self.s_est = s_est[len(s_est) - self.currentWinSize:]
-        self.d_est = self.x[-1] - self.s_est[-1]
+#        self.d_est = self.x[-1] - self.s_est[-1]
+        self.d_est = 0
         ## updated state/signal estimation
         self.sd_est = np.concatenate([self.s_est, np.array([self.d_est])])
         ## updated covariance estimation
         # self.M_est = np.zeros((self.currentWinSize+1,self.currentWinSize+1))
-        dev = self.x - self.s_est
-        dev_d = np.concatenate([dev, np.zeros(1)]).reshape([-1,1])
-        self.M_est = dev_d.dot(dev_d.T)
-        # self.M_est = 1e-4*np.ones((self.predWinSize+1,self.predWinSize+1))
+#        dev = self.x - self.s_est
+#        dev_d = np.concatenate([dev, np.zeros(1)]).reshape([-1,1])
+#        self.M_est = dev_d.dot(dev_d.T)
+        self.M_est = 1e-4*np.ones((self.currentWinSize+1,self.currentWinSize+1))
 
         # the array that store all x and all s for now
         self.all_original_data = np.array(init_x)
@@ -115,7 +117,8 @@ class oneIterPowerKalmanFilter:
         # next q points predicted by current regression line
         # self.q_epochs = self.epochs[:self.pointPeriod] + self.currentWinSize * self.numEpsBtwVal
         self.q_epochs = np.arange(self.epochs[-1]+self.numEpsBtwVal, self.epochs[-1]+(self.pointPeriod+1)*self.numEpsBtwVal, self.numEpsBtwVal)
-        self.sq_pred = power_function(self.q_epochs, self.a, self.b) + self.d_est
+#        self.sq_pred = power_function(self.q_epochs, self.a, self.b) + self.d_est
+        self.sq_pred = power_function(self.q_epochs, self.a, self.b) + np.power(self.d_est,2)
         # next state predition
         if self.currentWinSize + self.pointPeriod >= self.predWinSize:
             self.s_pred = np.concatenate([self.s_est[len(self.s_est)-(self.predWinSize-self.pointPeriod):], self.sq_pred])
@@ -146,7 +149,8 @@ class oneIterPowerKalmanFilter:
         # the devirative of f_{1:q}
         dy_1q = (vertical_ones_w.dot(temp))*part2
         vertical_ones_q = np.ones(self.pointPeriod).reshape((-1,1))
-        df_1q = np.concatenate([dy_1q.T, vertical_ones_q], axis=1)
+#        df_1q = np.concatenate([dy_1q.T, vertical_ones_q], axis=1)
+        df_1q = np.concatenate([dy_1q.T, 2*self.d_est*vertical_ones_q], axis=1)
 
         # get the derivative of whole f
         if self.currentWinSize >= self.predWinSize:
@@ -276,7 +280,8 @@ class oneIterPowerKalmanFilter:
                 epoch_queue.pop(0)
             epoch_queue.append(epoch)
 
-            predict = power_function(epoch, a, b) + self.d_est
+#            predict = power_function(epoch, a, b) + self.d_est
+            predict = power_function(epoch, a, b) + np.power(self.d_est, 2)
             predicts.append(predict)
             if len(s_queue) >= self.predWinSize:
                 s_queue.pop(0)
