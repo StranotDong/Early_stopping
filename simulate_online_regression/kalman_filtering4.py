@@ -81,6 +81,8 @@ class oneIterPowerKalmanFilter:
     '''
     def _R_estimation(self):
         measure_var = np.var(self.x - self.s_est)
+        # assume noise is Rayleigh distribution
+        # measure_var = 1/(2*len(self.x))*np.sum(np.power(self.x-self.s_est,2))
         self.R = measure_var * np.eye(self.pointPeriod)
         # num_whole_points = len(self.all_original_data)
         # actual_R_win_size = min(num_whole_points, self.RWinSize)
