@@ -55,13 +55,14 @@ def early_stopping_step(data, min_delta, patience, win_size, epochs_between_eval
     for epoch in range(len(data)):
         if epoch > 0:
             if smoothed_data[epoch-1] - smoothed_data[epoch] > min_delta:
-                rst = epoch
+#                rst = epoch
                 patience_cnt = 0
             else:
                 patience_cnt += 1
             if patience_cnt > patience:
+                rst = epoch
                 break
-
+#    print(rst)
     return (rst+1)*epochs_between_eval
 
 
@@ -73,7 +74,7 @@ def power_regression(x,y,weights):
     # coeff, _ = np.polynomial.polynomial.polyfit(np.log(x), np.log(y), deg=1, w=weights)
     # print(coeff)
     # return math.exp(coeff[0]), coeff[1]
-    A = np.vstack([np.log(x)*weights, np.ones(len(x))]).T
+    A = np.vstack([np.log(x)*weights, np.ones(len(x))*weights]).T
     b, a = np.linalg.lstsq(A, np.log(y)*weights, rcond=-1)[0]
     return math.exp(a), b
 
