@@ -180,8 +180,9 @@ class oneIterPowerKalmanFilter:
             dfd = np.concatenate([np.zeros(self.currentWinSize), np.array([1])]).reshape((1, -1))
         else:
             I = np.eye(self.predWinSize - self.pointPeriod)
-            zeros = np.zeros((self.predWinSize - self.pointPeriod, self.currentWinSize - self.predWinSize + self.pointPeriod+1))
-            df_qw = np.concatenate([I, zeros], axis=1)
+            zeros = np.zeros((self.predWinSize-self.pointPeriod, self.currentWinSize - self.predWinSize + self.pointPeriod))
+            zeros2 = np.zeros((self.predWinSize - self.pointPeriod, 1))
+            df_qw = np.concatenate([zeros, I, zeros2], axis=1)
             dfd = np.concatenate([np.zeros(self.currentWinSize), np.array([1])]).reshape((1, -1))
 
         self.F = np.concatenate([df_qw, df_1q, dfd])

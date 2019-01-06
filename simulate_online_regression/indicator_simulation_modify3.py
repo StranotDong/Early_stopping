@@ -21,6 +21,10 @@ input:
     num_samples: how many samples to generate when using bootstrapping
     upper_limit: only consider the predicted epoch smaller than upper_limit
     lower_limit: only consider the predicted epoch larger than upper_limit
+    regression_on_linear_weight: at the early stage, it's better to do linear regression
+        and then do a power regression on the linear line. This is the weights for such
+        method. Should be in [0,1]
+    **kwargs: a,b,d 
 return:
     mean: mean of all predicted epochs
     stopping_epochs: all predicted epochs
@@ -34,18 +38,36 @@ def early_stopping_prediction_adding_noise(a,b,d,linear_bias,
                                            num_samples=100,
                                            upper_limit=2e4,
                                            lower_limit=0,
+                                           regression_on_linear_weight=0,
+                                           **kwargs
                                            ):
     num_points = int((upper_limit-lower_limit) // num_epochs_between_eval) # the number of noisy points we want to generate
 
     x = np.linspace(lower_limit, upper_limit, num_points)
     y = a*np.power(x,b) + d*(x-linear_bias)
-    
+    y1 = kwargs['al']*np.power(x,kwargs['bl']) + kwargs['dl']*(x-linear_bias)
+
+    num_samples1 = int(num_samples * regression_on_linear_weight)
+    num_samples0 = num_samples - num_samples1    
     stopping_epochs = []
-    for i in range(num_samples):
+    for i in range(num_samples0):
         #         noise = np.random.normal(0, np.sqrt(var), num_points)
-        # noise = np.random.rayleigh(np.sqrt(2*var/(4-np.pi)), num_points) #- var*np.sqrt(np.pi/2)
-        noise = np.random.normal(0, np.sqrt(var/4), num_points)
+        noise = np.random.rayleigh(np.sqrt((4-np.pi)/2*var), num_points) - var*np.sqrt(np.pi/2)
         z = y + noise
+        
+        if i == 0:
+            sample = z
+            smoothed_sample = smooth_by_linear_filter(z, smooth_win_size)
+    
+        try:
+            stopping_epochs.append(early_stopping_step(z, min_delta, patience, smooth_win_size, num_epochs_between_eval) + lower_limit)
+        except:
+            continue
+
+    for i in range(num_samples1):
+        #         noise = np.random.normal(0, np.sqrt(var), num_points)
+        noise = np.random.rayleigh(np.sqrt((4-np.pi)/2*var), num_points) - var*np.sqrt(np.pi/2)
+        z = y1 + noise
         
         if i == 0:
             sample = z
@@ -77,7 +99,7 @@ input:
     earlyStoppingStep: ground truth
     data: the data that used to predict the epoch
     smooth_win_size: window size for smoothing
-    epochs_between_eval: number of epochs between two evals
+    epochs_between_eval: final number of epochs between two evals
     min_delta, patience: no improvement (less than min_delta) for patience epoch is stopping criteria
     pred_win_size: the window size for epoch prediction, wrt points not real epochs
     left_tail_size: the window where the data should be weighted (< 1) when doing regression,
@@ -105,7 +127,7 @@ def powerRegressionIndicator(
                             ######################## simulation ######################
                             earlyStoppingStep, 
                             #########################################################
-                            data,
+                            data, epochs,
                             smooth_win_size,
                             epochs_between_eval,
                             min_delta, patience,
@@ -120,12 +142,14 @@ def powerRegressionIndicator(
                             upper_limit=2e4,
                             is_fit_smoothed=False,
                             noise_est_win_size=None,
+                            pure_regression_on_linear_end=2000,
+                            pure_power_regression_begin=3000,
                             ):
     original_data = data
     if not is_fit_smoothed:
         position_bias = 0
     else:
-        position_bias = smooth_win_size // 2 - 1 
+        position_bias = smooth_win_size - 1
         data = smooth_by_linear_filter(data, smooth_win_size)
     if noise_est_win_size == None:
         noise_est_win_size = pred_win_size
@@ -163,40 +187,42 @@ def powerRegressionIndicator(
     predicted_steps = []
     pred = 0
 
+    # a queue to store current indices of data and epochs used to do the regression
+    # max size is pred_win_size
+    reg_indice = [] 
+    # a queue to store current indices of data and epochs used to estimate variance
+    # max size is noise_est_win_size
+    noise_est_indice = [] 
+
     ################### simulation #####################
-    for i in range(len(data)):
-        global_step += epochs_between_eval
-    
-        ###############################
-        # save time, should be deleted in practice
+    for i in range(len(data)): 
         if global_step > earlyStoppingStep:
             break
-        ###############################
-        num_evals = global_step//epochs_between_eval - position_bias
+
+        global_step = epochs[i]
+        num_evals = i+1 - position_bias
+
+        # regression data and epochs
+        if len(reg_indice) >= pred_win_size:
+            reg_indice.pop(0)
+        reg_indice.append(i - position_bias // 2)
+        
+        # data and epoch for estimating noise
+        if len(noise_est_indice) >= noise_est_win_size:
+            noise_est_indice.pop(0)            
+        noise_est_indice.append(i) 
 
         if num_evals >= start_point and (num_evals-start_point)%period == 0:
-            predicted_steps.append(global_step)
-            print("Global Step: {}".format(global_step))
+            print(global_step)
+            predicted_steps.append(global_step)            
 
-            # locate the smoothed points at the middle points of each window
-            if num_evals < pred_win_size:
-                s = 0 #+ position_bias // 2
-            else:
-                s = num_evals - pred_win_size #+ position_bias // 2
-            e = num_evals #+ position_bias // 2
-            
-            if num_evals + position_bias< noise_est_win_size:
-                s_noise_est = 0
-            else:
-                s_noise_est = num_evals + position_bias - noise_est_win_size
-            e_noise_est = num_evals + position_bias
-            
-            steps = (np.arange(s,e)+1) * epochs_between_eval
-            steps_noise_est = (np.arange(s_noise_est,e_noise_est)+1) * epochs_between_eval
+            steps = epochs[reg_indice] # locate the smoothed points at the middle points of each window, if necessary
+            y = data[reg_indice]
+            steps_noise_est = epochs[noise_est_indice]
+            y_noise_est = original_data[noise_est_indice]
             shift = steps[-1]
-            y = data[s:e]
             weights = weights_generator(len(y))
-            
+
             if not is_power_linear:
                 # regression by linear regression on log-log scale
                 a, b = power_regression(steps, y, weights)
@@ -206,25 +232,65 @@ def powerRegressionIndicator(
                 # a = res.x[0]
                 # b = res.x[1]
                 d = 0 # the coefficient of linear part should be 0 if we don't use linear part to fit the curve
-                var = np.var(original_data[s_noise_est:e_noise_est]-(a*np.power(steps_noise_est,b)))
             else:
-                fun = lambda x: np.sum(np.power(y-(np.exp(x[1]*np.log(steps)+np.log(x[0]))+x[2]**2*(steps-steps[0])),2))
+                fun = lambda x: np.sum(np.power((y-(np.exp(x[1]*np.log(steps)+np.log(x[0]))+x[2]**2*(steps-steps[0])))*weights,2))
                 res = scipy.optimize.minimize(fun, inits, method=method, bounds=bounds)
                 a = res.x[0]
                 b = res.x[1]
                 d = res.x[2]**2
-                var = np.var(original_data[s_noise_est:e_noise_est]-(a*np.power(steps_noise_est,b) + d*(steps_noise_est-steps[0])))
+            var = np.var(y_noise_est-(a*np.power(steps_noise_est,b) + d*(steps_noise_est-steps[0])))
+
+            # linear regression
+            A = np.vstack([steps, np.ones(len(steps))]).T
+            a1, b1 = np.linalg.lstsq(A, y, rcond=-1)[0]
+            if a1 < 0:                
+                linear_end = math.floor(-b1/a1)
+                if b1/a1 == 0:
+                    linear_end -= 1
+                steps_l = np.arange(steps[0], linear_end+1)
+                yl = a1*steps_l+b1
+                al, bl = power_regression(steps_l, yl, np.ones(len(steps_l)))
+                print(a1)
             
             last_pred = pred
-            pred, stopping_epochs, sample, smoothed_sample = early_stopping_prediction_adding_noise(
-                                                                a,b,d,steps[0],var,
-                                                                min_delta,patience,
-                                                                 epochs_between_eval,
-                                                                 smooth_win_size,
-                                                                 num_samples=num_samples,
-                                                                 upper_limit=upper_limit,
-                                                                 lower_limit=global_step
-                                                                                 )
+            if a1 < 0 and global_step < pure_regression_on_linear_end:
+                # var = np.var(original_data[s_noise_est:e]-a1*steps_noise_est-b1)
+                pred, stopping_epochs, sample, smoothed_sample = early_stopping_prediction_adding_noise(
+                                                                    a,b,d,steps[0],var,
+                                                                    min_delta,patience,
+                                                                     epochs_between_eval,
+                                                                     smooth_win_size,
+                                                                     num_samples=num_samples,
+                                                                     upper_limit=upper_limit,
+                                                                     lower_limit=steps[-1],
+                                                                     regression_on_linear_weight=1,
+                                                                     al=al, bl=bl, dl=0
+                                                                                     )
+            elif global_step >= pure_power_regression_begin or a1 >= 0:
+                pred, stopping_epochs, sample, smoothed_sample = early_stopping_prediction_adding_noise(
+                                                                    a,b,d,steps[0],var,
+                                                                    min_delta,patience,
+                                                                     epochs_between_eval,
+                                                                     smooth_win_size,
+                                                                     num_samples=num_samples,
+                                                                     upper_limit=upper_limit,
+                                                                     lower_limit=steps[-1],
+                                                                     regression_on_linear_weight=0,
+                                                                     al=0, bl=0, dl=0
+                                                                                     )
+            elif a1 < 0:
+                regression_on_linear_weight = (pure_power_regression_begin - global_step)/(pure_power_regression_begin - pure_regression_on_linear_end)
+                pred, stopping_epochs, sample, smoothed_sample = early_stopping_prediction_adding_noise(
+                                                                    a,b,d,steps[0],var,
+                                                                    min_delta,patience,
+                                                                     epochs_between_eval,
+                                                                     smooth_win_size,
+                                                                     num_samples=num_samples,
+                                                                     upper_limit=upper_limit,
+                                                                     lower_limit=steps[-1],
+                                                                     regression_on_linear_weight=regression_on_linear_weight,
+                                                                     al=al, bl=bl, dl=0
+                                                                                     )
             print("Predicted Stopping epoch is {}. a = {}, b = {}, d^2={}".format(pred, a, b, d))
             
             _, CI_left, CI_right = mean_confidence_interval(stopping_epochs)
@@ -238,6 +304,7 @@ def powerRegressionIndicator(
             vars_.append(var)
                         
     return preds, coeffs, shifts, samples, smoothed_samples, CIs, vars_, predicted_steps
+
 
 
 
@@ -291,8 +358,7 @@ def KFIndicator(
         for i in range(num_samples):
 #             noise = np.random.multivariate_normal(np.zeros(period), R, noise_sample_size).reshape((1,-1))[0]
 #             noise = np.concatenate([noise, np.random.multivariate_normal(np.zeros(residual), truncated_R)])
-            # noise = np.random.rayleigh(np.sqrt(2*R[0,0]/(4-np.pi)), len(predicts)) #- R[0,0]*np.sqrt(np.pi/2)
-            noise = np.random.normal(0, np.sqrt(R[0,0]/2), len(predicts))
+            noise = np.random.rayleigh(np.sqrt((4-np.pi)/2*R[0,0]), len(predicts)) - R[0,0]*np.sqrt(np.pi/2)
             measurement = predicts + noise
             smoothed_measurement = smooth_by_linear_filter(measurement, smooth_win_size)
             try:

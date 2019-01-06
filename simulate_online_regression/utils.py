@@ -74,9 +74,18 @@ def power_regression(x,y,weights):
     # coeff, _ = np.polynomial.polynomial.polyfit(np.log(x), np.log(y), deg=1, w=weights)
     # print(coeff)
     # return math.exp(coeff[0]), coeff[1]
+
     A = np.vstack([np.log(x)*weights, np.ones(len(x))*weights]).T
     b, a = np.linalg.lstsq(A, np.log(y)*weights, rcond=-1)[0]
     return math.exp(a), b
+
+
+def linear_regression(x, y):   
+    weights = np.ones(len(x))
+    A = np.vstack([x*weights, np.ones(len(x))*weights]).T
+    a, b = np.linalg.lstsq(A, y*weights, rcond=-1)[0]
+
+    return a, b
 
 '''
 solve the inequality: ax^b - a(x+n)^b < delta
