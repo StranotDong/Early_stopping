@@ -101,17 +101,19 @@ def CIs2errs(CIs):
     
     return np.array(errs)
 
-def _regression_method(steps, y, weights, is_power_linear, **kwargs):
-    if not is_power_linear:
+def _regression_method(steps, y, weights, reg_method, **kwargs):
+    if reg_method == 'linear_logx':
         # regression by linear regression on log-log scale
-        # a, b = power_regression(steps, y, weights)
+        a, b = power_regression(steps, y, weights)
+        d = 0
+    elif reg_method == 'power_num_op':
         # regression by numerical optimization
-        fun = lambda x: np.sum(np.power(y-(np.exp(x[1]*np.log(steps)+np.log(x[0]))), 2))
+        fun = lambda x: np.sum(np.power((y-(np.exp(x[1]*np.log(steps)+np.log(x[0]))))*weights, 2))
         res = scipy.optimize.minimize(fun, kwargs['inits'], method=kwargs['method'], bounds=kwargs['bounds'])
         a = res.x[0]
         b = res.x[1]
         d = 0 # the coefficient of linear part should be 0 if we don't use linear part to fit the curve
-    else:
+    elif reg_method == 'power_linear_num_op':
         fun = lambda x: np.sum(np.power((y-(np.exp(x[1]*np.log(steps)+np.log(x[0]))+x[2]**2*(steps-steps[0])))*weights,2))
         res = scipy.optimize.minimize(fun, kwargs['inits'], method=kwargs['method'], bounds=kwargs['bounds'])
         a = res.x[0]
@@ -135,6 +137,10 @@ input:
     left_tail_size: the window where the data should be weighted (< 1) when doing regression,
         wrt points not real epochs
     period: the period for prediction (when using validation curve), wrt points not real epochs
+    regression_method: three options:
+        'linear_logx': power regression by linear regression on y-logx
+        'power_num_op': power regression by numerical optimization
+        'power_linear_num_op': power+linear regression by numerical optimization
     on_train_pred_win_size: the window size for epoch prediction (when using train curve), wrt points not real epochs
     on_train_period: the period for prediction (when using train curve), wrt points not real epochs
     is_power_linear: if using power + linear to do the regression
@@ -177,9 +183,10 @@ def powerRegressionIndicator(
                             pred_win_size, 
                             left_tail_size,
                             period, 
+                            regression_method,
                             on_train_pred_win_size=None,
                             on_train_period=None,
-                            is_power_linear=False,
+                            # is_power_linear=False,
                             bounds=None, inits=None, method='TNC',
                             start_point=100,
                             weights_type='equal',
@@ -189,8 +196,9 @@ def powerRegressionIndicator(
                             noise_est_win_size=None, train_noise_est_win_size=None,
                             pure_regression_on_train_end=25,
                             pure_regression_on_val_begin=100,
-                            pure_regression_on_regression_end=1000,
-                            pure_regression_on_original_begin=2000,
+                            # pure_regression_on_regression_end=1000,
+                            # pure_regression_on_original_begin=2000,
+                            regression_transition_epochs=1000,
                             num_val_outliers=10,
                             turning_point_check_win_size=500,
                             turning_point_check_alpha=0.01
@@ -366,10 +374,12 @@ def powerRegressionIndicator(
                 if last_is_turning_point and is_turning_point:
                     turning_point_epoch = global_step
                     finish_tuning_point_check_flag = True
+                    pure_regression_on_regression_end = global_step
+                    pure_regression_on_original_begin = global_step + regression_transition_epochs
             #     break
 
             weights = weights_generator(len(train_reg_steps))
-            a, b, d = _regression_method(train_reg_steps, train_reg_data, weights, is_power_linear, inits=inits, method=method, bounds=bounds)
+            a, b, d = _regression_method(train_reg_steps, train_reg_data, weights, regression_method, inits=inits, method=method, bounds=bounds)
             # a, b = power_regression(train_reg_steps, train_reg_data, weights)
             # d = 0
             # use the original - power_regression_on_original to calculate variance
@@ -380,13 +390,16 @@ def powerRegressionIndicator(
             a1, b1 = linear_regression(train_reg_steps, train_reg_data)
             # var = np.var(np.array(train_noise_est_data)-a1*np.array(train_noise_est_steps)-b1)
 
-            if global_step < pure_regression_on_regression_end:
-                regression_on_regression_weight = 1
-            elif global_step >= pure_regression_on_original_begin:
-                regression_on_regression_weight = 0
+            if finish_tuning_point_check_flag:
+                if global_step < pure_regression_on_regression_end:
+                    regression_on_regression_weight = 1
+                elif global_step >= pure_regression_on_original_begin:
+                    regression_on_regression_weight = 0
+                else:
+                    regression_on_regression_weight = (pure_regression_on_original_begin - global_step) \
+                        /(pure_regression_on_original_begin - pure_regression_on_regression_end)
             else:
-                regression_on_regression_weight = (pure_regression_on_original_begin - global_step) \
-                    /(pure_regression_on_original_begin - pure_regression_on_regression_end)
+                regression_on_regression_weight = 1
             if a1 >= 0: # use regression on original if a1 is greater than 0
                 is_other_cases = False
                 al, bl, dl = 0, 0, 0
@@ -507,25 +520,29 @@ def powerRegressionIndicator(
                 if last_is_turning_point and is_turning_point:
                     turning_point_epoch = global_step
                     finish_tuning_point_check_flag = True
+                    pure_regression_on_regression_end = global_step
+                    pure_regression_on_original_begin = global_step + regression_transition_epochs
 
             weights = weights_generator(len(val_reg_steps))
-            a, b, d = _regression_method(val_reg_steps, val_reg_data, weights, is_power_linear, inits=inits, method=method, bounds=bounds)
+            a, b, d = _regression_method(val_reg_steps, val_reg_data, weights, regression_method, inits=inits, method=method, bounds=bounds)
             # use the original - power_regression_on_original to calculate variance
             # var = np.var(val_noise_est_data-(a*np.power(val_noise_est_steps,b) + d*(val_noise_est_steps-val_reg_steps[0])))
             var = np.var(np.array(val_noise_est_data[:len(val_noise_est_data)-smooth_win_size//2]) - np.array(val_noise_est_smoothed_data))
             if finish_tuning_point_check_flag:
-                print(var, global_step, turning_point_epoch)
-                var /= (6-(global_step - turning_point_epoch)*(6-2)/turning_point_epoch)
+                var /= (6-(global_step - turning_point_epoch)*(6-3)/turning_point_epoch)
             else:
                 var /= 6
             if global_step >= pure_regression_on_val_begin:
-                if global_step < pure_regression_on_regression_end:
-                    regression_on_regression_weight = 1
-                elif global_step >= pure_regression_on_original_begin:
-                    regression_on_regression_weight = 0
+                if finish_tuning_point_check_flag:
+                    if global_step < pure_regression_on_regression_end:
+                        regression_on_regression_weight = 1
+                    elif global_step >= pure_regression_on_original_begin:
+                        regression_on_regression_weight = 0
+                    else:
+                        regression_on_regression_weight = (pure_regression_on_original_begin - global_step) \
+                            /(pure_regression_on_original_begin - pure_regression_on_regression_end)
                 else:
-                    regression_on_regression_weight = (pure_regression_on_original_begin - global_step) \
-                        /(pure_regression_on_original_begin - pure_regression_on_regression_end)
+                    regression_on_regression_weight = 1
 
                 a1, b1 = linear_regression(val_reg_steps, val_reg_data)
                 if a1 >= 0:
@@ -558,13 +575,16 @@ def powerRegressionIndicator(
                 train_weight = (epochs[pure_regression_on_val_begin-1] - global_step)\
                     /(epochs[pure_regression_on_val_begin - 1] - epochs[pure_regression_on_train_end-1])
                 val_weight = 1 - train_weight
-                if global_step < pure_regression_on_regression_end:
-                    regression_on_regression_weight = 1
-                elif global_step >= pure_regression_on_original_begin:
-                    regression_on_regression_weight = 0
+                if finish_tuning_point_check_flag:
+                    if global_step < pure_regression_on_regression_end:
+                        regression_on_regression_weight = 1
+                    elif global_step >= pure_regression_on_original_begin:
+                        regression_on_regression_weight = 0
+                    else:
+                        regression_on_regression_weight = (pure_regression_on_original_begin - global_step) \
+                            /(pure_regression_on_original_begin - pure_regression_on_regression_end)
                 else:
-                    regression_on_regression_weight = (pure_regression_on_original_begin - global_step) \
-                        /(pure_regression_on_original_begin - pure_regression_on_regression_end)
+                    regression_on_regression_weight = 1
                 regression_on_original_weight = 1 - regression_on_regression_weight
                 weights = [train_weight * regression_on_regression_weight, train_weight * regression_on_original_weight,
                             val_weight * regression_on_regression_weight, val_weight * regression_on_original_weight]
@@ -586,7 +606,7 @@ def powerRegressionIndicator(
                 coeffs.append((al, bl,dl))
                 
                 # train curve: regression on original
-                al, bl, dl = _regression_method(train_reg_steps, train_reg_data, weights, is_power_linear, inits=inits, method=method, bounds=bounds)
+                al, bl, dl = _regression_method(train_reg_steps, train_reg_data, weights, regression_method, inits=inits, method=method, bounds=bounds)
                 coeffs.append((al, bl, dl))
 
                 # val curve: regression on regression
