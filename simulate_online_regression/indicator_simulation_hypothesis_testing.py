@@ -370,7 +370,7 @@ def powerRegressionIndicator(
                 last_is_turning_point = is_turning_point
                 is_turning_point, turning_point_p_value = \
                         one_sided_slope_test(train_turning_point_check_steps, train_turning_point_check_data, turning_point_check_alpha)
-                print(is_turning_point)
+                print(is_turning_point, turning_point_p_value)
                 if last_is_turning_point and is_turning_point:
                     turning_point_epoch = global_step
                     finish_tuning_point_check_flag = True
@@ -378,8 +378,8 @@ def powerRegressionIndicator(
                     pure_regression_on_original_begin = global_step + regression_transition_epochs
             #     break
 
-            weights = weights_generator(len(train_reg_steps))
-            a, b, d = _regression_method(train_reg_steps, train_reg_data, weights, regression_method, inits=inits, method=method, bounds=bounds)
+            regression_weights = weights_generator(len(train_reg_steps))
+            a, b, d = _regression_method(train_reg_steps, train_reg_data, regression_weights, regression_method, inits=inits, method=method, bounds=bounds)
             # a, b = power_regression(train_reg_steps, train_reg_data, weights)
             # d = 0
             # use the original - power_regression_on_original to calculate variance
@@ -504,6 +504,12 @@ def powerRegressionIndicator(
                 train_noise_est_data.pop(0)    
             train_noise_est_steps.append(train_epochs[train_pointer])
             train_noise_est_data.append(train_data[train_pointer])
+            # train data and train epoch for finding turning point
+            if len(train_turning_point_check_steps) >= turning_point_check_win_size:
+                train_turning_point_check_steps.pop(0)
+                train_turning_point_check_data.pop(0)    
+            train_turning_point_check_steps.append(train_epochs[train_pointer])
+            train_turning_point_check_data.append(train_data[train_pointer])
 
             train_pointer += 1
 
@@ -523,15 +529,15 @@ def powerRegressionIndicator(
                     pure_regression_on_regression_end = global_step
                     pure_regression_on_original_begin = global_step + regression_transition_epochs
 
-            weights = weights_generator(len(val_reg_steps))
-            a, b, d = _regression_method(val_reg_steps, val_reg_data, weights, regression_method, inits=inits, method=method, bounds=bounds)
+            regression_weights = weights_generator(len(val_reg_steps))
+            a, b, d = _regression_method(val_reg_steps, val_reg_data, regression_weights, regression_method, inits=inits, method=method, bounds=bounds)
             # use the original - power_regression_on_original to calculate variance
             # var = np.var(val_noise_est_data-(a*np.power(val_noise_est_steps,b) + d*(val_noise_est_steps-val_reg_steps[0])))
             var = np.var(np.array(val_noise_est_data[:len(val_noise_est_data)-smooth_win_size//2]) - np.array(val_noise_est_smoothed_data))
             if finish_tuning_point_check_flag:
-                var /= (6-(global_step - turning_point_epoch)*(6-3)/turning_point_epoch)
+                var /= (5-(global_step - turning_point_epoch)*(5-3)/turning_point_epoch)
             else:
-                var /= 6
+                var /= 5
             if global_step >= pure_regression_on_val_begin:
                 if finish_tuning_point_check_flag:
                     if global_step < pure_regression_on_regression_end:
@@ -606,7 +612,8 @@ def powerRegressionIndicator(
                 coeffs.append((al, bl,dl))
                 
                 # train curve: regression on original
-                al, bl, dl = _regression_method(train_reg_steps, train_reg_data, weights, regression_method, inits=inits, method=method, bounds=bounds)
+                regression_weights = weights_generator(len(train_reg_steps))
+                al, bl, dl = _regression_method(train_reg_steps, train_reg_data, regression_weights, regression_method, inits=inits, method=method, bounds=bounds)
                 coeffs.append((al, bl, dl))
 
                 # val curve: regression on regression
